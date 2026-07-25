@@ -1,10 +1,11 @@
-package api
+package routes
 
 import (
 	"fmt"
 	"net/http"
 	"time"
 
+	"github.com/devlup-labs/Ghostwire/coordination-server/routes/general"
 	"github.com/gorilla/mux"
 )
 
@@ -22,10 +23,10 @@ func createRouter() (router *mux.Router) {
 	router = mux.NewRouter()
 
 	v1subrouter := router.PathPrefix("/api/v1").Subrouter()
-	v1subrouter.HandleFunc("/login", LoginHandler)
-	v1subrouter.HandleFunc("/connect", ConnectHandler)
-	v1subrouter.HandleFunc("/checkin", CheckinHandler)
-	v1subrouter.HandleFunc("/register", RegisterHandler)
+	v1subrouter.HandleFunc("/login", general.LoginHandler)
+	v1subrouter.HandleFunc("/connect", general.ConnectHandler)
+	v1subrouter.HandleFunc("/checkin", general.CheckinHandler)
+	v1subrouter.HandleFunc("/register", general.RegisterHandler)
 
 	router.HandleFunc("/api", versionCheckHandler)
 	router.HandleFunc("/", rootHandler)
