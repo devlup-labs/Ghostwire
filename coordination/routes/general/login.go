@@ -1,214 +1,160 @@
-// Package general implements the login/reconnect endpoint and other
-// non-admin, non-audit HTTP handlers for the coordination server.
 package general
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"sync"
 	"time"
 )
 
-// loginRequest is the body the agent sends to prove it still holds a valid
-// refresh token and to report its current health.
-type loginRequest struct {
+type LoginRequest struct {
 	DeviceID     string `json:"deviceId"`
 	RefreshToken string `json:"refreshToken"`
-	IsHealthy    *bool  `json:"isHealthy"` // pointer so a missing field is distinguishable from an explicit false
+	IsHealthy    *bool  `json:"isHealthy"` // pointer so a missing field is distinguishable from an explicit false, matching checkin.go
 }
 
-// loginResponse is returned when the refresh token checks out.
-type loginResponse struct {
-	AccessToken          string   `json:"accessToken"`
-	AccessTokenExpiresAt string   `json:"accessTokenExpiresAt"`
-	RefreshToken         string   `json:"refreshToken"`
-	Allowlist            []string `json:"allowlist"`
-	Blocklist            []string `json:"blocklist"`
+type LoginResponse struct {
+	AccessToken  string   `json:"accessToken"`
+	RefreshToken string   `json:"refreshToken"`
+	AllowList    []string `json:"allowList"`
+	BlockList    []string `json:"blockList"`
 }
 
-// errorResponse is returned for every failure case. ReauthURL is only
-// populated when the client should open a browser to redo SSO.
-type errorResponse struct {
-	Error     string `json:"error"`
-	ReauthURL string `json:"reauthUrl,omitempty"`
-}
-
-// DeviceRecord is what the store layer hands back for a given device ID.
-type DeviceRecord struct {
-	DeviceID         string
+// authRecord is login's own mock device-auth store — kept separate from connect.go's mockDevices, since none of the existing stub files share state with each other either. A real devices table would likely hold these fields alongside the ones connect.go reads.
+type authRecord struct {
 	RefreshTokenHash string
 	RefreshExpiresAt time.Time
 	Revoked          bool
-	Allowlist        []string
-	Blocklist        []string
+	AllowList        []string
+	BlockList        []string
 }
 
-// Store is the seam between this handler and the database. Implement it
-// against the real sqlc-generated queries; a fake implementing this same
-// interface is what unit tests for this handler should use.
-//
-// RotateRefreshToken performs a compare-and-swap: it only writes the new
-// hash if the row's current hash still matches oldHash. The returned bool
-// is false when that comparison fails — i.e. something else already
-// rotated this token since it was read, most likely a duplicate/retried
-// request. A single failed swap is not, on its own, evidence of theft;
-// callers should fail that request safely and let the client retry login
-// rather than escalating straight to revocation.
-type Store interface {
-	GetDeviceByID(ctx context.Context, deviceID string) (*DeviceRecord, error)
-	RotateRefreshToken(ctx context.Context, deviceID, oldHash, newHash string, newExpiry time.Time) (ok bool, err error)
-}
+var (
+	// mockAuthMu guards mockAuth. Login is the first handler in this package that writes to shared state (rotating the refresh token on every successful login) — Go maps aren't safe for concurrent read/write, and net/http serves each request on its own goroutine.
+	mockAuthMu sync.Mutex
 
-// Sessions creates enrollment sessions — the same mechanism used for
-// first-time enrollment — so an expired refresh token can be recovered
-// without inventing a second reauth flow.
-type Sessions interface {
-	CreateForDevice(ctx context.Context, deviceID string) (sessionID string, err error)
-}
+	mockAuth = map[string]authRecord{
+		"device-001": {
+			RefreshTokenHash: hashToken("dev-refresh-token-001"),
+			RefreshExpiresAt: time.Now().Add(30 * 24 * time.Hour),
+			Revoked:          false,
+			AllowList:        []string{"research-server", "db-server"},
+			BlockList:        []string{"finance-server"},
+		},
+	}
+)
 
-// LoginHandler handles POST /api/v1/login.
-//
-// ReauthBaseURL is set once at server startup, from this deployment's own
-// config (e.g. GHOSTWIRE_REAUTH_URL) — every self-hosted instance points
-// at its own company's enrollment page, so this must never be hardcoded.
-type LoginHandler struct {
-	Store           Store
-	Sessions        Sessions
-	AccessTokenTTL  time.Duration // e.g. 15 * time.Minute
-	RefreshTokenTTL time.Duration // e.g. 30 * 24 * time.Hour
-	ReauthBaseURL   string
-}
+// reauthBaseURL is where a client should send the user to redo SSO once its refresh token has expired.
+// TODO: Change this to be based on env vars, same as router.go's server Addr.
+const reauthBaseURL = "https://ghostwire.example.com/enroll"
 
-func (h *LoginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	defer r.Body.Close()
+func LoginHandler(w http.ResponseWriter, r *http.Request) {
+	// Matching checkin.go: Content-Type set once, up front, applying to every response path below — success or error — rather than being set (or forgotten) separately in each branch.
+	w.Header().Set("Content-Type", "application/json")
 
-	// This response can carry an access token, a refresh token, or a
-	// reauth URL — never let a cache or intermediary proxy hold a copy.
+	// This response can carry an access token, a refresh token, or a reauth URL — never let a cache or intermediary proxy hold a copy.
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
 
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"message": "Method Not Allowed"})
+		return
+	}
+
+	defer r.Body.Close()
+
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 
-	var req loginRequest
+	var req LoginRequest
 	if err := dec.Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "malformed_request", "")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"message": "Invalid JSON"})
 		return
 	}
-	if req.DeviceID == "" || req.RefreshToken == "" {
-		writeError(w, http.StatusBadRequest, "malformed_request", "")
+
+	if req.DeviceID == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"message": "Missing field deviceId"})
+		return
+	}
+	if req.RefreshToken == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"message": "Missing field refreshToken"})
 		return
 	}
 	if req.IsHealthy == nil {
-		writeError(w, http.StatusBadRequest, "malformed_request", "")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"message": "Missing field isHealthy"})
 		return
 	}
 
-	device, err := h.Store.GetDeviceByID(ctx, req.DeviceID)
-	if err != nil || device == nil {
-		writeError(w, http.StatusUnauthorized, "token_invalid", "")
+	mockAuthMu.Lock()
+	defer mockAuthMu.Unlock()
+
+	record, exists := mockAuth[req.DeviceID]
+	if !exists || hashToken(req.RefreshToken) != record.RefreshTokenHash {
+		// Same response for "no such device" and "wrong token" on purpose: a distinct message for "no such device" would let someone enumerate valid device IDs by watching which error comes back — the same issue connect.go currently has via its 404.
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"message": "Invalid refresh token"})
 		return
 	}
 
-	providedHash := hashToken(req.RefreshToken)
-	if subtle.ConstantTimeCompare([]byte(providedHash), []byte(device.RefreshTokenHash)) != 1 {
-		writeError(w, http.StatusUnauthorized, "token_invalid", "")
+	if time.Now().After(record.RefreshExpiresAt) {
+		// The one deliberate extension beyond checkin.go's plain {"message": ...} shape: this path needs to hand back a URL the client can act on, not just prose. Still the same map[string]string type, just a second key, added only where it's actually needed.
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{
+			"message":   "Refresh token expired",
+			"reauthUrl": reauthBaseURL + "?device=" + req.DeviceID,
+		})
 		return
 	}
 
-	if time.Now().After(device.RefreshExpiresAt) {
-		sessionID, err := h.Sessions.CreateForDevice(ctx, req.DeviceID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal_error", "")
-			return
-		}
-		writeError(w, http.StatusUnauthorized, "token_expired", h.ReauthBaseURL+"?s="+sessionID)
-		return
-	}
-
-	if device.Revoked {
-		writeError(w, http.StatusForbidden, "device_revoked", "")
+	if record.Revoked {
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{"message": "Device has been revoked"})
 		return
 	}
 
 	if !*req.IsHealthy {
-		writeError(w, http.StatusNotAcceptable, "unhealthy", "")
+		w.WriteHeader(http.StatusNotAcceptable)
+		json.NewEncoder(w).Encode(map[string]string{"message": "Device reported unhealthy"})
 		return
 	}
 
 	newAccessToken := generateToken()
 	newRefreshToken := generateToken()
-	newRefreshExpiry := time.Now().Add(h.RefreshTokenTTL)
 
-	ok, err := h.Store.RotateRefreshToken(ctx, req.DeviceID, device.RefreshTokenHash, hashToken(newRefreshToken), newRefreshExpiry)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "")
-		return
-	}
-	if !ok {
-		// Someone else rotated this token between our read and our write —
-		// almost always a duplicate/retried request, not an attack. Fail
-		// this one request cleanly; the client just logs in again.
-		writeError(w, http.StatusConflict, "token_conflict", "")
-		return
-	}
+	record.RefreshTokenHash = hashToken(newRefreshToken)
+	record.RefreshExpiresAt = time.Now().Add(30 * 24 * time.Hour)
+	mockAuth[req.DeviceID] = record
 
-	writeJSON(w, http.StatusOK, loginResponse{
-		AccessToken:          newAccessToken,
-		AccessTokenExpiresAt: time.Now().Add(h.AccessTokenTTL).Format(time.RFC3339),
-		RefreshToken:         newRefreshToken,
-		Allowlist:            nonNilStrings(device.Allowlist),
-		Blocklist:            nonNilStrings(device.Blocklist),
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(LoginResponse{
+		AccessToken:  newAccessToken,
+		RefreshToken: newRefreshToken,
+		AllowList:    record.AllowList,
+		BlockList:    record.BlockList,
 	})
 }
 
-// nonNilStrings guarantees a non-nil slice, so JSON encoding produces []
-// instead of null when a device has no allow/blocklist entries yet.
-func nonNilStrings(s []string) []string {
-	if s == nil {
-		return []string{}
-	}
-	return s
-}
-
-// generateToken returns a cryptographically random, URL-safe token with
-// 256 bits of entropy — enough that guessing it is not a realistic attack.
+// generateToken returns a cryptographically random, URL-safe token with 256 bits of entropy.
 func generateToken() string {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		// crypto/rand failing means the OS's entropy source is broken —
-		// there is no safe way to continue, so this should be caught by
-		// a top-level recover-and-500 middleware, not handled locally.
 		panic(err)
 	}
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-// hashToken returns a hex-encoded SHA-256 digest of a token, for storage.
-// SHA-256 (fast) is correct here — unlike passwords, these tokens already
-// have 256 bits of entropy, so there's nothing for a slow, adaptive hash
-// like bcrypt to protect against.
+// hashToken returns a hex-encoded SHA-256 digest, so mockAuth (and later, a real devices table) never holds a directly usable token in plaintext.
 func hashToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
-}
-
-// writeJSON writes a JSON response with the given status code.
-func writeJSON(w http.ResponseWriter, status int, body any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(body)
-}
-
-// writeError writes a structured JSON error. reauthURL is left empty for
-// every case except token_expired.
-func writeError(w http.ResponseWriter, status int, code, reauthURL string) {
-	writeJSON(w, status, errorResponse{Error: code, ReauthURL: reauthURL})
 }
