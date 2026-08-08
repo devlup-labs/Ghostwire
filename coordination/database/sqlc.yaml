@@ -1,0 +1,19 @@
+version: "2"
+sql:
+  - engine: "sqlite"
+    queries: "query.sql"
+    schema: "schema.sql"
+    gen:
+      go:
+        package: "sqlc_db"
+        out: "sqlc_db"
+        overrides:
+          - column: policies.bidirectional
+            nullable: false
+            go_type: bool
+          - column: policies.active
+            nullable: false
+            go_type: bool
+          - column: users.isrevoked
+            nullable: false
+            go_type: bool
