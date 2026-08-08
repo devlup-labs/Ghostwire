@@ -6,7 +6,11 @@ CREATE TABLE IF NOT EXISTS groups (
 
 CREATE TABLE IF NOT EXISTS users (
     userId TEXT PRIMARY KEY,
-    userName TEXT NOT NULL
+    userName TEXT NOT NULL,
+    userType TEXT NOT NULL,
+    oAuthProvider TEXT NOT NULL,
+    oAuthId TEXT NOT NULL,
+    isRevoked INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS devices (
@@ -15,6 +19,11 @@ CREATE TABLE IF NOT EXISTS devices (
     publicKey BLOB NOT NULL,
     gwIp TEXT NOT NULL,
     publicIp TEXT,
+    refreshTokenHash TEXT NOT NULL,
+    accessTokenHash TEXT NOT NULL,
+    firstAccessTime timestamp NOT NULL,
+    lastAccessTime timestamp NOT NULL,
+    userAgent TEXT NOT NULL,
     -- Reln between users and devices (one-many)
     FOREIGN KEY (userId) REFERENCES users(userId) ON DELETE CASCADE
 );

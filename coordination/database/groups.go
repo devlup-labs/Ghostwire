@@ -4,17 +4,18 @@ import (
 	"database/sql"
 
 	"github.com/devlup-labs/Ghostwire/coordination-server/database/sqlc_db"
+	"github.com/google/uuid"
 )
 
 type Group struct {
-	groupId   string
-	groupName string
-	groupDesc string
+	GroupId   string
+	GroupName string
+	GroupDesc string
 }
 
 func (g Group) ListDevices() (res []Device, err error) {
 	// Union logic query
-	devices, err := DbQueries.ListDevicesInGroup(ctx, g.groupId)
+	devices, err := DbQueries.ListDevicesInGroup(ctx, g.GroupId)
 	if err != nil {
 		return res, err
 	}
@@ -29,16 +30,62 @@ func (g Group) ListDevices() (res []Device, err error) {
 	return res, err
 }
 
-func CreateGroup(groupId string, groupName string, groupDesc string) (grp Group, err error) {
+func (g Group) UpdateGroup(groupName string, groupDesc string) (err error) {
+	_, err = DbQueries.UpdateGroup(ctx, sqlc_db.UpdateGroupParams{
+		Groupname: groupName,
+		Groupdesc: sql.NullString{String: groupDesc, Valid: groupDesc != ""},
+		Groupid:   g.GroupId,
+	})
+	return err
+}
+
+func (g Group) AddUser(userId string) (err error) {
+	err = DbQueries.AddUserToGroup(ctx, sqlc_db.AddUserToGroupParams{
+		Groupid: g.GroupId,
+		Userid:  userId,
+	})
+	return err
+}
+
+func (g Group) RemoveUser(userId string) (err error) {
+	err = DbQueries.RemoveUserFromGroup(ctx, sqlc_db.RemoveUserFromGroupParams{
+		Groupid: g.GroupId,
+		Userid:  userId,
+	})
+	return err
+}
+
+func (g Group) AddDevice(deviceId string) (err error) {
+	err = DbQueries.AddDeviceToGroup(ctx, sqlc_db.AddDeviceToGroupParams{
+		Groupid:  g.GroupId,
+		Deviceid: deviceId,
+	})
+	return err
+}
+
+func (g Group) RemoveDevice(deviceId string) (err error) {
+	err = DbQueries.RemoveDeviceFromGroup(ctx, sqlc_db.RemoveDeviceFromGroupParams{
+		Groupid:  g.GroupId,
+		Deviceid: deviceId,
+	})
+	return err
+}
+
+// CreateGroup returns the group struct of the created group, and an error.
+// Can panic if cannot generate a valid UUID.
+func CreateGroup(groupName string, groupDesc string) (grp Group, err error) {
+	groupId := uuid.NewString()
 	g, err := DbQueries.CreateGroup(ctx, sqlc_db.CreateGroupParams{
 		Groupid:   groupId,
 		Groupname: groupName,
 		Groupdesc: sql.NullString{String: groupDesc, Valid: groupDesc != ""},
 	})
-
-	grp.groupId = g.Groupid
-	grp.groupName = g.Groupname
-	grp.groupDesc = g.Groupdesc.String
+	if err != nil {
+		return grp, err
+	}
+	grp.GroupId = g.Groupid
+	grp.GroupName = g.Groupname
+	grp.GroupDesc = g.Groupdesc.String
 
 	return grp, err
 }
@@ -48,54 +95,13 @@ func GetGroup(groupId string) (g Group, err error) {
 	if err != nil {
 		return g, err
 	}
-	g.groupId = group.Groupid
-	g.groupName = group.Groupname
-	g.groupDesc = group.Groupdesc.String
+	g.GroupId = group.Groupid
+	g.GroupName = group.Groupname
+	g.GroupDesc = group.Groupdesc.String
 	return g, err
-}
-
-func UpdateGroup(groupId string, groupName string, groupDesc string) (err error) {
-	_, err = DbQueries.UpdateGroup(ctx, sqlc_db.UpdateGroupParams{
-		Groupname: groupName,
-		Groupdesc: sql.NullString{String: groupDesc, Valid: groupDesc != ""},
-		Groupid:   groupId,
-	})
-	return err
 }
 
 func DeleteGroup(groupId string) (err error) {
 	err = DbQueries.DeleteGroup(ctx, groupId)
-	return err
-}
-
-func AddUserToGroup(groupId string, userId string) (err error) {
-	err = DbQueries.AddUserToGroup(ctx, sqlc_db.AddUserToGroupParams{
-		Groupid: groupId,
-		Userid:  userId,
-	})
-	return err
-}
-
-func RemoveUserFromGroup(groupId string, userId string) (err error) {
-	err = DbQueries.RemoveUserFromGroup(ctx, sqlc_db.RemoveUserFromGroupParams{
-		Groupid: groupId,
-		Userid:  userId,
-	})
-	return err
-}
-
-func AddDeviceToGroup(groupId string, deviceId string) (err error) {
-	err = DbQueries.AddDeviceToGroup(ctx, sqlc_db.AddDeviceToGroupParams{
-		Groupid:  groupId,
-		Deviceid: deviceId,
-	})
-	return err
-}
-
-func RemoveDeviceFromGroup(groupId string, deviceId string) (err error) {
-	err = DbQueries.RemoveDeviceFromGroup(ctx, sqlc_db.RemoveDeviceFromGroupParams{
-		Groupid:  groupId,
-		Deviceid: deviceId,
-	})
 	return err
 }

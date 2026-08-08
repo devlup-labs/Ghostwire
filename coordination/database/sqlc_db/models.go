@@ -10,11 +10,16 @@ import (
 )
 
 type Device struct {
-	Deviceid  string
-	Userid    string
-	Publickey []byte
-	Gwip      string
-	Publicip  sql.NullString
+	Deviceid         string
+	Userid           string
+	Publickey        []byte
+	Gwip             string
+	Publicip         sql.NullString
+	Refreshtokenhash string
+	Accesstokenhash  string
+	Firstaccesstime  time.Time
+	Lastaccesstime   time.Time
+	Useragent        string
 }
 
 type Group struct {
@@ -49,6 +54,10 @@ type Policy struct {
 }
 
 type User struct {
-	Userid   string
-	Username string
+	Userid        string
+	Username      string
+	Usertype      string
+	Oauthprovider string
+	Oauthid       string
+	Isrevoked     bool
 }

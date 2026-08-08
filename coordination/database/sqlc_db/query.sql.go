@@ -58,18 +58,23 @@ func (q *Queries) AddUserToGroup(ctx context.Context, arg AddUserToGroupParams) 
 const createDevice = `-- name: CreateDevice :one
 
 INSERT INTO devices (
-    deviceId, userId, publicKey, gwIp, publicIp
+    deviceId, userId, publicKey, gwIp, publicIp, firstAccessTime, lastAccessTime, userAgent, refreshTokenHash, accessTokenHash
 ) VALUES (
-    ?, ?, ?, ?, ?
-) RETURNING deviceid, userid, publickey, gwip, publicip
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+) RETURNING deviceid, userid, publickey, gwip, publicip, refreshtokenhash, accesstokenhash, firstaccesstime, lastaccesstime, useragent
 `
 
 type CreateDeviceParams struct {
-	Deviceid  string
-	Userid    string
-	Publickey []byte
-	Gwip      string
-	Publicip  sql.NullString
+	Deviceid         string
+	Userid           string
+	Publickey        []byte
+	Gwip             string
+	Publicip         sql.NullString
+	Firstaccesstime  time.Time
+	Lastaccesstime   time.Time
+	Useragent        string
+	Refreshtokenhash string
+	Accesstokenhash  string
 }
 
 // =============
@@ -82,6 +87,11 @@ func (q *Queries) CreateDevice(ctx context.Context, arg CreateDeviceParams) (Dev
 		arg.Publickey,
 		arg.Gwip,
 		arg.Publicip,
+		arg.Firstaccesstime,
+		arg.Lastaccesstime,
+		arg.Useragent,
+		arg.Refreshtokenhash,
+		arg.Accesstokenhash,
 	)
 	var i Device
 	err := row.Scan(
@@ -90,6 +100,11 @@ func (q *Queries) CreateDevice(ctx context.Context, arg CreateDeviceParams) (Dev
 		&i.Publickey,
 		&i.Gwip,
 		&i.Publicip,
+		&i.Refreshtokenhash,
+		&i.Accesstokenhash,
+		&i.Firstaccesstime,
+		&i.Lastaccesstime,
+		&i.Useragent,
 	)
 	return i, err
 }
@@ -181,24 +196,42 @@ func (q *Queries) CreatePolicy(ctx context.Context, arg CreatePolicyParams) (Pol
 const createUser = `-- name: CreateUser :one
 
 INSERT INTO users (
-    userId, userName
+    userId, userName, userType, oAuthProvider, oAuthId, isRevoked
 ) VALUES (
-    ?, ?
-) RETURNING userid, username
+    ?, ?, ?, ?, ?, ?
+) RETURNING userid, username, usertype, oauthprovider, oauthid, isrevoked
 `
 
 type CreateUserParams struct {
-	Userid   string
-	Username string
+	Userid        string
+	Username      string
+	Usertype      string
+	Oauthprovider string
+	Oauthid       string
+	Isrevoked     bool
 }
 
 // ===========
 // |  Users  |
 // ===========
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
-	row := q.db.QueryRowContext(ctx, createUser, arg.Userid, arg.Username)
+	row := q.db.QueryRowContext(ctx, createUser,
+		arg.Userid,
+		arg.Username,
+		arg.Usertype,
+		arg.Oauthprovider,
+		arg.Oauthid,
+		arg.Isrevoked,
+	)
 	var i User
-	err := row.Scan(&i.Userid, &i.Username)
+	err := row.Scan(
+		&i.Userid,
+		&i.Username,
+		&i.Usertype,
+		&i.Oauthprovider,
+		&i.Oauthid,
+		&i.Isrevoked,
+	)
 	return i, err
 }
 
@@ -243,7 +276,7 @@ func (q *Queries) DeleteUser(ctx context.Context, userid string) error {
 }
 
 const getDevice = `-- name: GetDevice :one
-SELECT deviceid, userid, publickey, gwip, publicip FROM devices
+SELECT deviceid, userid, publickey, gwip, publicip, refreshtokenhash, accesstokenhash, firstaccesstime, lastaccesstime, useragent FROM devices
 WHERE deviceId = ? LIMIT 1
 `
 
@@ -256,6 +289,11 @@ func (q *Queries) GetDevice(ctx context.Context, deviceid string) (Device, error
 		&i.Publickey,
 		&i.Gwip,
 		&i.Publicip,
+		&i.Refreshtokenhash,
+		&i.Accesstokenhash,
+		&i.Firstaccesstime,
+		&i.Lastaccesstime,
+		&i.Useragent,
 	)
 	return i, err
 }
@@ -298,19 +336,62 @@ func (q *Queries) GetPolicy(ctx context.Context, policyid string) (Policy, error
 }
 
 const getUser = `-- name: GetUser :one
-SELECT userid, username FROM users
+SELECT userid, username, usertype, oauthprovider, oauthid, isrevoked FROM users
 WHERE userId = ? LIMIT 1
 `
 
 func (q *Queries) GetUser(ctx context.Context, userid string) (User, error) {
 	row := q.db.QueryRowContext(ctx, getUser, userid)
 	var i User
-	err := row.Scan(&i.Userid, &i.Username)
+	err := row.Scan(
+		&i.Userid,
+		&i.Username,
+		&i.Usertype,
+		&i.Oauthprovider,
+		&i.Oauthid,
+		&i.Isrevoked,
+	)
 	return i, err
 }
 
+const getUsersByUsername = `-- name: GetUsersByUsername :many
+SELECT userid, username, usertype, oauthprovider, oauthid, isrevoked FROM users
+WHERE userName = ?
+ORDER BY userId
+`
+
+func (q *Queries) GetUsersByUsername(ctx context.Context, username string) ([]User, error) {
+	rows, err := q.db.QueryContext(ctx, getUsersByUsername, username)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []User
+	for rows.Next() {
+		var i User
+		if err := rows.Scan(
+			&i.Userid,
+			&i.Username,
+			&i.Usertype,
+			&i.Oauthprovider,
+			&i.Oauthid,
+			&i.Isrevoked,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDevicesByUser = `-- name: ListDevicesByUser :many
-SELECT deviceid, userid, publickey, gwip, publicip FROM devices
+SELECT deviceid, userid, publickey, gwip, publicip, refreshtokenhash, accesstokenhash, firstaccesstime, lastaccesstime, useragent FROM devices
 WHERE userId = ?
 `
 
@@ -329,6 +410,11 @@ func (q *Queries) ListDevicesByUser(ctx context.Context, userid string) ([]Devic
 			&i.Publickey,
 			&i.Gwip,
 			&i.Publicip,
+			&i.Refreshtokenhash,
+			&i.Accesstokenhash,
+			&i.Firstaccesstime,
+			&i.Lastaccesstime,
+			&i.Useragent,
 		); err != nil {
 			return nil, err
 		}
@@ -344,33 +430,51 @@ func (q *Queries) ListDevicesByUser(ctx context.Context, userid string) ([]Devic
 }
 
 const listDevicesInGroup = `-- name: ListDevicesInGroup :many
-SELECT d.deviceId, d.userId, d.publicKey, d.gwIp, d.publicIp
+SELECT d.deviceId, d.userId, d.publicKey, d.gwIp, d.publicIp, d.firstAccessTime, d.lastAccessTime, d.userAgent, d.refreshTokenHash, d.accessTokenHash
 FROM devices d
 JOIN group_devices gd ON d.deviceId = gd.deviceId
 WHERE gd.groupId = ?1
 UNION
-SELECT d.deviceId, d.userId, d.publicKey, d.gwIp, d.publicIp
+SELECT d.deviceId, d.userId, d.publicKey, d.gwIp, d.publicIp, d.firstAccessTime, d.lastAccessTime, d.userAgent, d.refreshTokenHash, d.accessTokenHash
 FROM devices d
 JOIN group_users gu ON d.userId = gu.userId
 WHERE gu.groupId = ?1
 `
 
+type ListDevicesInGroupRow struct {
+	Deviceid         string
+	Userid           string
+	Publickey        []byte
+	Gwip             string
+	Publicip         sql.NullString
+	Firstaccesstime  time.Time
+	Lastaccesstime   time.Time
+	Useragent        string
+	Refreshtokenhash string
+	Accesstokenhash  string
+}
+
 // For the union logic of devices and user's devices
-func (q *Queries) ListDevicesInGroup(ctx context.Context, groupid string) ([]Device, error) {
+func (q *Queries) ListDevicesInGroup(ctx context.Context, groupid string) ([]ListDevicesInGroupRow, error) {
 	rows, err := q.db.QueryContext(ctx, listDevicesInGroup, groupid)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Device
+	var items []ListDevicesInGroupRow
 	for rows.Next() {
-		var i Device
+		var i ListDevicesInGroupRow
 		if err := rows.Scan(
 			&i.Deviceid,
 			&i.Userid,
 			&i.Publickey,
 			&i.Gwip,
 			&i.Publicip,
+			&i.Firstaccesstime,
+			&i.Lastaccesstime,
+			&i.Useragent,
+			&i.Refreshtokenhash,
+			&i.Accesstokenhash,
 		); err != nil {
 			return nil, err
 		}
@@ -415,7 +519,7 @@ func (q *Queries) ListGroupsForUser(ctx context.Context, userid string) ([]Group
 }
 
 const listOnlyDevicesInGroup = `-- name: ListOnlyDevicesInGroup :many
-SELECT d.deviceid, d.userid, d.publickey, d.gwip, d.publicip FROM devices d
+SELECT d.deviceid, d.userid, d.publickey, d.gwip, d.publicip, d.refreshtokenhash, d.accesstokenhash, d.firstaccesstime, d.lastaccesstime, d.useragent FROM devices d
 JOIN group_devices gd ON d.deviceId = gd.deviceId
 WHERE gd.groupId = ?
 `
@@ -435,6 +539,11 @@ func (q *Queries) ListOnlyDevicesInGroup(ctx context.Context, groupid string) ([
 			&i.Publickey,
 			&i.Gwip,
 			&i.Publicip,
+			&i.Refreshtokenhash,
+			&i.Accesstokenhash,
+			&i.Firstaccesstime,
+			&i.Lastaccesstime,
+			&i.Useragent,
 		); err != nil {
 			return nil, err
 		}
@@ -490,7 +599,7 @@ func (q *Queries) ListPolicies(ctx context.Context) ([]Policy, error) {
 }
 
 const listUsers = `-- name: ListUsers :many
-SELECT userid, username FROM users
+SELECT userid, username, usertype, oauthprovider, oauthid, isrevoked FROM users
 ORDER BY userId
 `
 
@@ -503,7 +612,14 @@ func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
 	var items []User
 	for rows.Next() {
 		var i User
-		if err := rows.Scan(&i.Userid, &i.Username); err != nil {
+		if err := rows.Scan(
+			&i.Userid,
+			&i.Username,
+			&i.Usertype,
+			&i.Oauthprovider,
+			&i.Oauthid,
+			&i.Isrevoked,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -518,7 +634,7 @@ func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
 }
 
 const listUsersInGroup = `-- name: ListUsersInGroup :many
-SELECT u.userid, u.username FROM users u
+SELECT u.userid, u.username, u.usertype, u.oauthprovider, u.oauthid, u.isrevoked FROM users u
 JOIN group_users gu ON u.userId = gu.userId
 WHERE gu.groupId = ?
 `
@@ -532,7 +648,14 @@ func (q *Queries) ListUsersInGroup(ctx context.Context, groupid string) ([]User,
 	var items []User
 	for rows.Next() {
 		var i User
-		if err := rows.Scan(&i.Userid, &i.Username); err != nil {
+		if err := rows.Scan(
+			&i.Userid,
+			&i.Username,
+			&i.Usertype,
+			&i.Oauthprovider,
+			&i.Oauthid,
+			&i.Isrevoked,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -578,16 +701,21 @@ func (q *Queries) RemoveUserFromGroup(ctx context.Context, arg RemoveUserFromGro
 
 const updateDevice = `-- name: UpdateDevice :one
 UPDATE devices
-SET publicKey = ?, gwIp = ?, publicIp = ?
+SET publicKey = ?, gwIp = ?, publicIp = ?, firstAccessTime = ?, lastAccessTime = ?, userAgent = ?, refreshTokenHash = ?, accessTokenHash = ?
 WHERE deviceId = ?
-RETURNING deviceid, userid, publickey, gwip, publicip
+RETURNING deviceid, userid, publickey, gwip, publicip, refreshtokenhash, accesstokenhash, firstaccesstime, lastaccesstime, useragent
 `
 
 type UpdateDeviceParams struct {
-	Publickey []byte
-	Gwip      string
-	Publicip  sql.NullString
-	Deviceid  string
+	Publickey        []byte
+	Gwip             string
+	Publicip         sql.NullString
+	Firstaccesstime  time.Time
+	Lastaccesstime   time.Time
+	Useragent        string
+	Refreshtokenhash string
+	Accesstokenhash  string
+	Deviceid         string
 }
 
 func (q *Queries) UpdateDevice(ctx context.Context, arg UpdateDeviceParams) (Device, error) {
@@ -595,6 +723,11 @@ func (q *Queries) UpdateDevice(ctx context.Context, arg UpdateDeviceParams) (Dev
 		arg.Publickey,
 		arg.Gwip,
 		arg.Publicip,
+		arg.Firstaccesstime,
+		arg.Lastaccesstime,
+		arg.Useragent,
+		arg.Refreshtokenhash,
+		arg.Accesstokenhash,
 		arg.Deviceid,
 	)
 	var i Device
@@ -604,6 +737,11 @@ func (q *Queries) UpdateDevice(ctx context.Context, arg UpdateDeviceParams) (Dev
 		&i.Publickey,
 		&i.Gwip,
 		&i.Publicip,
+		&i.Refreshtokenhash,
+		&i.Accesstokenhash,
+		&i.Firstaccesstime,
+		&i.Lastaccesstime,
+		&i.Useragent,
 	)
 	return i, err
 }
@@ -677,4 +815,31 @@ func (q *Queries) UpdatePolicy(ctx context.Context, arg UpdatePolicyParams) (Pol
 		&i.Createdby,
 	)
 	return i, err
+}
+
+const updateUser = `-- name: UpdateUser :exec
+UPDATE users
+SET userName = ?, userType = ?, oAuthProvider = ?, oAuthId = ?, isRevoked = ?
+WHERE userId = ?
+`
+
+type UpdateUserParams struct {
+	Username      string
+	Usertype      string
+	Oauthprovider string
+	Oauthid       string
+	Isrevoked     bool
+	Userid        string
+}
+
+func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) error {
+	_, err := q.db.ExecContext(ctx, updateUser,
+		arg.Username,
+		arg.Usertype,
+		arg.Oauthprovider,
+		arg.Oauthid,
+		arg.Isrevoked,
+		arg.Userid,
+	)
+	return err
 }

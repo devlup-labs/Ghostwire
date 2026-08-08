@@ -6,6 +6,8 @@ import (
 
 	_ "embed"
 
+	_ "modernc.org/sqlite"
+
 	"github.com/devlup-labs/Ghostwire/coordination-server/database/sqlc_db"
 )
 

@@ -4,18 +4,28 @@
 
 -- name: CreateUser :one
 INSERT INTO users (
-    userId, userName
+    userId, userName, userType, oAuthProvider, oAuthId, isRevoked
 ) VALUES (
-    ?, ?
+    ?, ?, ?, ?, ?, ?
 ) RETURNING *;
 
 -- name: ListUsers :many
 SELECT * FROM users
 ORDER BY userId;
 
+-- name: UpdateUser :exec
+UPDATE users
+SET userName = ?, userType = ?, oAuthProvider = ?, oAuthId = ?, isRevoked = ?
+WHERE userId = ?;
+
 -- name: GetUser :one
 SELECT * FROM users
 WHERE userId = ? LIMIT 1;
+
+-- name: GetUsersByUsername :many
+SELECT * FROM users
+WHERE userName = ?
+ORDER BY userId;
 
 -- name: DeleteUser :exec
 DELETE FROM users
@@ -27,9 +37,9 @@ WHERE userId = ?;
 
 -- name: CreateDevice :one
 INSERT INTO devices (
-    deviceId, userId, publicKey, gwIp, publicIp
+    deviceId, userId, publicKey, gwIp, publicIp, firstAccessTime, lastAccessTime, userAgent, refreshTokenHash, accessTokenHash
 ) VALUES (
-    ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 ) RETURNING *;
 
 -- name: GetDevice :one
@@ -42,7 +52,7 @@ WHERE userId = ?;
 
 -- name: UpdateDevice :one
 UPDATE devices
-SET publicKey = ?, gwIp = ?, publicIp = ?
+SET publicKey = ?, gwIp = ?, publicIp = ?, firstAccessTime = ?, lastAccessTime = ?, userAgent = ?, refreshTokenHash = ?, accessTokenHash = ?
 WHERE deviceId = ?
 RETURNING *;
 
@@ -122,12 +132,12 @@ WHERE gd.groupId = ?;
 
 -- For the union logic of devices and user's devices
 -- name: ListDevicesInGroup :many
-SELECT d.deviceId, d.userId, d.publicKey, d.gwIp, d.publicIp
+SELECT d.deviceId, d.userId, d.publicKey, d.gwIp, d.publicIp, d.firstAccessTime, d.lastAccessTime, d.userAgent, d.refreshTokenHash, d.accessTokenHash
 FROM devices d
 JOIN group_devices gd ON d.deviceId = gd.deviceId
 WHERE gd.groupId = ?1
 UNION
-SELECT d.deviceId, d.userId, d.publicKey, d.gwIp, d.publicIp
+SELECT d.deviceId, d.userId, d.publicKey, d.gwIp, d.publicIp, d.firstAccessTime, d.lastAccessTime, d.userAgent, d.refreshTokenHash, d.accessTokenHash
 FROM devices d
 JOIN group_users gu ON d.userId = gu.userId
 WHERE gu.groupId = ?1;

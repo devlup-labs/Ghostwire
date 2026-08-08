@@ -14,3 +14,6 @@ sql:
           - column: policies.active
             nullable: false
             go_type: bool
+          - column: users.isrevoked
+            nullable: false
+            go_type: bool
