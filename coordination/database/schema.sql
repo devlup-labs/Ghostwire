@@ -50,7 +50,6 @@ CREATE TABLE IF NOT EXISTS group_devices (
 
 CREATE TABLE IF NOT EXISTS policies (
     policyId TEXT PRIMARY KEY,
-    policyType TEXT NOT NULL,
     policyName TEXT NOT NULL,
     policyDesc TEXT,
     
@@ -62,7 +61,6 @@ CREATE TABLE IF NOT EXISTS policies (
     receiverType TEXT NOT NULL,
     receiverId TEXT NOT NULL,
     
-    bidirectional INTEGER NOT NULL DEFAULT 1, -- Maps to a bool
     active INTEGER NOT NULL DEFAULT 0, -- Policies are inactive by default
     
     createdTimestamp timestamp NOT NULL,

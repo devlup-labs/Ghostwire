@@ -27,7 +27,7 @@ func TestDatabaseWorkflow(t *testing.T) {
 
 	var user2 User
 	t.Run("Create User2", func(t *testing.T) {
-		userId, err := CreateUser("bob", "admin", "Microslop", "xyzw")
+		userId, err := CreateUser("bob", "admin", "Macroslop", "xyzw")
 		require.NoError(t, err)
 		user2, err = GetUser(userId)
 		require.NoError(t, err)
@@ -40,10 +40,10 @@ func TestDatabaseWorkflow(t *testing.T) {
 		require.NoError(t, err)
 		require.NotEmpty(t, grp.GroupId)
 
-		err = grp.AddUser(user.UserId)
+		err = grp.AddUser(user)
 		require.NoError(t, err)
 
-		grps, err := user.Groups()
+		grps, err := user.GetGroups()
 		require.NoError(t, err)
 		require.Len(t, grps, 1)
 		require.Equal(t, grps[0].GroupId, grp.GroupId)
@@ -91,11 +91,13 @@ func TestDatabaseWorkflow(t *testing.T) {
 		linuxGroup, err := CreateGroup("Linux Group", "")
 		require.NoError(t, err)
 
-		require.NoError(t, linuxGroup.AddUser(users[0].UserId))
-		require.NoError(t, linuxGroup.AddDevice(device2.DeviceId))
+		require.NoError(t, linuxGroup.AddUser(users[0]))
+		require.NoError(t, linuxGroup.AddDevice(device2))
 
+		t.Logf("Alice Devices: %#v", device2)
 		devs, err := linuxGroup.ListDevices()
 		require.NoError(t, err)
 		require.Len(t, devs, 2)
 	})
+
 }
