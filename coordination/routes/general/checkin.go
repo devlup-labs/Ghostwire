@@ -2,12 +2,16 @@ package general
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
+
+	"github.com/devlup-labs/Ghostwire/coordination-server/database"
 )
 
-// NOTE: ACL stands for Access Control List, i.e. both allowlist and blocklist
+// NOTE: ACL stands for Access Control List, i.e. allowlist
 
 type ACLEntry struct {
 	UserID        string
@@ -23,26 +27,88 @@ type ACL map[string]ACLEntry
 // "DeviceID": "sha256hash of the associated ACLEntry object"
 type ACLHashes map[string]string
 
-func dummyGetACL(deviceId string) (allowlist ACL, blocklist ACL) {
-	// Fetches ACL from the database, computed according to network policies
-	allowlist = ACL{
-		"0": {
-			UserID:        "laptop",
-			Name:          "ABCD",
-			GwIp:          "127.0.0.2",
-			PublicKey:     []byte("1234"),
-			PublicAddress: "56.67.78.89:42342",
-		},
-		"1": {
-			UserID:        "server",
-			Name:          "DEFG",
-			GwIp:          "127.0.0.3",
-			PublicKey:     []byte("7890"),
-			PublicAddress: "66.77.88.99:88488",
-		},
+func getDevicesForEntity(entityId string, entityType string) ([]database.Device, error) {
+	switch entityType {
+	case "user":
+		user, err := database.GetUser(entityId)
+		if err != nil {
+			return nil, err
+		}
+		devices, err := user.GetDevices()
+		if err != nil {
+			return nil, err
+		}
+		return devices, nil
+	case "group":
+		grp, err := database.GetGroup(entityId)
+		if err != nil {
+			return nil, err
+		}
+		devices, err := grp.ListDevices()
+		return devices, nil
 	}
-	blocklist = ACL{}
-	return
+	return []database.Device{}, nil
+}
+
+func GetACL(deviceId string) (allowlist ACL, err error) {
+	allowlist = make(ACL)
+
+	policies, err := database.ListPolicies()
+	if err != nil {
+		return nil, err
+	}
+
+	device, err := database.GetDevice(deviceId)
+	if err != nil {
+		return nil, err
+	}
+	groupList, err := device.GetGroups()
+	if err != nil {
+		return nil, err
+	}
+PolicyLoop:
+	for _, policy := range policies {
+		if !(policy.Active) {
+			continue
+		}
+
+		// If deviceId is not found in policy's senders, skip it
+	PolicySwitch:
+		switch policy.SenderType {
+		case "user":
+			if device.UserId != policy.SenderId {
+				continue PolicyLoop
+			}
+		case "group":
+			for _, v := range groupList {
+				if v.GroupId == policy.SenderId {
+					// Applicable policy found, so continue
+					break PolicySwitch
+				}
+			}
+			// If no group matches, wrong policy
+			continue PolicyLoop
+		default:
+			return nil, errors.New("Invalid policy.SenderType")
+		}
+
+		receiverDevices, err := getDevicesForEntity(policy.ReceiverId, policy.ReceiverType)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, receiverDevice := range receiverDevices {
+			allowlist[receiverDevice.DeviceId] = ACLEntry{
+				UserID:        receiverDevice.UserId,
+				Name:          "NAME",
+				GwIp:          receiverDevice.GwIp,
+				PublicKey:     receiverDevice.PublicKey,
+				PublicAddress: receiverDevice.PublicIp,
+			}
+		}
+	}
+
+	return allowlist, nil
 }
 
 func CheckinHandler(w http.ResponseWriter, r *http.Request) {
@@ -56,7 +122,6 @@ func CheckinHandler(w http.ResponseWriter, r *http.Request) {
 		GwPort          int       `json:"gwPort"`
 		IsHealthy       *bool     `json:"isHealthy"` // Pointer to detect whether field is unset or false
 		AllowlistHashes ACLHashes `json:"allowlistHashes"`
-		BlocklistHashes ACLHashes `json:"blocklistHashes"`
 	}
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
@@ -90,32 +155,28 @@ func CheckinHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Handle updates in ACL
-	allowlist, blocklist := dummyGetACL(requestVars.DeviceId)
+	allowlist, err := GetACL(requestVars.DeviceId)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]string{"message": "Not found" + err.Error()})
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"message": err.Error()})
+		}
+		return
+	}
 
-	for userId, hash := range requestVars.AllowlistHashes {
-		entry, ok := allowlist[userId]
+	for deviceId, hash := range requestVars.AllowlistHashes {
+		entry, ok := allowlist[deviceId]
 		if !ok {
 			// This key is in server's allowlist,
-			// but not the users.
+			// but not the device's.
 			// Keep it in `allowlist`
 		} else {
 			if hash == createACLEntryHash(entry) {
 				// No changes required
-				delete(allowlist, userId)
-			}
-		}
-	}
-
-	for userId, hash := range requestVars.BlocklistHashes {
-		entry, ok := blocklist[userId]
-		if !ok {
-			// This key is in server's blocklist,
-			// but not the users.
-			// Keep it in `blocklist`
-		} else {
-			if hash == createACLEntryHash(entry) {
-				// Don't send; user has exact entry
-				delete(blocklist, userId)
+				delete(allowlist, deviceId)
 			}
 		}
 	}
@@ -123,9 +184,6 @@ func CheckinHandler(w http.ResponseWriter, r *http.Request) {
 	res := map[string]ACL{}
 	if len(allowlist) != 0 {
 		res["allowlist"] = allowlist
-	}
-	if len(blocklist) != 0 {
-		res["blocklist"] = blocklist
 	}
 
 	w.WriteHeader(http.StatusOK)
