@@ -173,28 +173,14 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Update information supplied by the device.
-			if err := device.UpdatePublicKey(req.PublicKey); err != nil {
+			if err := device.Update(database.Device{
+				PublicKey:      req.PublicKey,
+				LastAccessTime: time.Now(),
+				UserAgent:      r.UserAgent(),
+			}); err != nil {
 				http.Error(
 					w,
-					"failed to update device public key",
-					http.StatusInternalServerError,
-				)
-				return
-			}
-
-			if err := device.UpdateLastAccessTime(time.Now()); err != nil {
-				http.Error(
-					w,
-					"failed to update device access time",
-					http.StatusInternalServerError,
-				)
-				return
-			}
-
-			if err := device.UpdateUserAgent(r.UserAgent()); err != nil {
-				http.Error(
-					w,
-					"failed to update device user agent",
+					"failed to update device",
 					http.StatusInternalServerError,
 				)
 				return

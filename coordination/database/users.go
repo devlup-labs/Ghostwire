@@ -24,55 +24,16 @@ func (u User) CreateDevice(publicKey []byte, gwIp string, refreshTokenHash strin
 		AccessTokenHash:  accessTokenHash,
 		UserAgent:        userAgent,
 	})
-<<<<<<< HEAD
-
-	dev = Device{
-		DeviceId:         d.Deviceid,
-		UserId:           d.Userid,
-		PublicKey:        d.Publickey,
-		GwIp:             d.Gwip,
-		PublicIp:         d.Publicip.String,
-		RefreshTokenHash: d.Refreshtokenhash,
-		AccessTokenHash:  d.Accesstokenhash,
-		FirstAccessTime:  d.Firstaccesstime,
-		LastAccessTime:   d.Lastaccesstime,
-		UserAgent:        d.Useragent,
-	}
-
-=======
 	if err != nil {
 		return Device{}, err
 	}
 	dev, err = GetDevice(deviceId)
->>>>>>> 84fc771 (feat: revamp database to use GORM instead of sqlc)
 	return dev, err
 }
 
 func (u User) GetDevices() (res []Device, err error) {
-<<<<<<< HEAD
-	d, err := DbQueries.ListDevicesByUser(ctx, u.UserId)
-	if err != nil {
-		return res, err
-	}
-	for _, device := range d {
-		res = append(res, Device{
-			DeviceId:         device.Deviceid,
-			UserId:           device.Userid,
-			PublicKey:        device.Publickey,
-			GwIp:             device.Gwip,
-			PublicIp:         device.Publicip.String,
-			RefreshTokenHash: device.Refreshtokenhash,
-			AccessTokenHash:  device.Accesstokenhash,
-			FirstAccessTime:  device.Firstaccesstime,
-			LastAccessTime:   device.Lastaccesstime,
-			UserAgent:        device.Useragent,
-		})
-	}
-	return res, nil
-=======
 	err = db.Model(&u).Association("Devices").Find(&res)
 	return
->>>>>>> 84fc771 (feat: revamp database to use GORM instead of sqlc)
 }
 
 // CreateUser returns the userId (UUID) of the created user, and an error.
@@ -100,22 +61,12 @@ func GetUser(userId string) (u User, err error) {
 }
 
 func GetUserByOAuth(oAuthProvider string, oAuthId string) (u User, err error) {
-	user, err := DbQueries.GetUserByOAuth(ctx, sqlc_db.GetUserByOAuthParams{
-		Oauthprovider: oAuthProvider,
-		Oauthid:       oAuthId,
-	})
-	if err != nil {
-		return u, err
-	}
-
-	u.UserId = user.Userid
-	u.UserName = user.Username
-	u.UserType = user.Usertype
-	u.OAuthProvider = user.Oauthprovider
-	u.OAuthId = user.Oauthid
-	u.IsRevoked = user.Isrevoked
-
-	return u, nil
+	u, err = gorm.G[User](db).Where(
+		"WHERE oAuthProvider = ? AND oAuthId = ?",
+		oAuthProvider,
+		oAuthId,
+	).Take(ctx)
+	return
 }
 
 // SearchUser looks up a user by their username.
