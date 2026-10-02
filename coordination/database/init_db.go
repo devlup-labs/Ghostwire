@@ -2,32 +2,36 @@ package database
 
 import (
 	"context"
-	"database/sql"
+	"log"
+	"os"
+	"time"
 
 	_ "embed"
 
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 	_ "modernc.org/sqlite"
-
-	"github.com/devlup-labs/Ghostwire/coordination-server/database/sqlc_db"
 )
 
 var ctx = context.Background()
-var DbQueries *sqlc_db.Queries
+var db *gorm.DB
 
-//go:embed schema.sql
-var ddl string
+func InitializeDatabase(filename string) (err error) {
+	newLogger := logger.New(
+		log.New(os.Stdout, "\n", log.LstdFlags), // io writer
+		logger.Config{
+			SlowThreshold:             time.Second,   // Slow SQL threshold
+			LogLevel:                  logger.Silent, // Log level
+			IgnoreRecordNotFoundError: false,         // Ignore ErrRecordNotFound error for logger
+			ParameterizedQueries:      false,         // Don't include params in the SQL log
+			Colorful:                  true,          // Disable color
+		},
+	)
 
-func InitializeDatabase(filename string) error {
-	db, err := sql.Open("sqlite", filename)
-	if err != nil {
-		return err
-	}
-
-	// create tables
-	if _, err := db.ExecContext(ctx, ddl); err != nil {
-		return err
-	}
-
-	DbQueries = sqlc_db.New(db)
-	return nil
+	db, err = gorm.Open(sqlite.Open(filename), &gorm.Config{
+		Logger: newLogger,
+	})
+	db.AutoMigrate(&User{}, &Device{}, &Policy{}, &Group{})
+	return
 }

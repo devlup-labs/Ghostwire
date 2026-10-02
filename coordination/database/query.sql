@@ -147,16 +147,35 @@ FROM devices d
 JOIN group_users gu ON d.userId = gu.userId
 WHERE gu.groupId = ?1;
 
+-- inverse of the above
+-- name: GetGroupsOfDevice :many
+SELECT g.*
+FROM groups g
+WHERE g.groupId IN (
+    -- either device is in group directly
+    SELECT groupId 
+    FROM group_devices gd
+    WHERE gd.deviceId = ?1
+
+    UNION
+
+    -- or device's user is in group
+    SELECT gu.groupId 
+    FROM group_users gu
+    JOIN devices d ON gu.userId = d.userId
+    WHERE d.deviceId = ?1
+);
+
 -- ============
 -- | Policies |
 -- ============
 
 -- name: CreatePolicy :one
 INSERT INTO policies (
-    policyType, policyName, policyDesc, senderType, senderId,
-    receiverType, receiverId, bidirectional, active, createdTimestamp, createdBy
+    policyId, policyName, policyDesc, senderType, senderId,
+    receiverType, receiverId, active, createdTimestamp, createdBy
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 ) RETURNING *;
 
 -- name: GetPolicy :one
@@ -168,7 +187,7 @@ SELECT * FROM policies;
 
 -- name: UpdatePolicy :one
 UPDATE policies
-SET policyType = ?, policyName = ?, policyDesc = ?, senderType = ?, senderId = ?, receiverType = ?, receiverId = ?, bidirectional = ?, active = ?
+SET policyName = ?, policyDesc = ?, senderType = ?, senderId = ?, receiverType = ?, receiverId = ?, active = ?
 WHERE policyId = ?
 RETURNING *;
 
