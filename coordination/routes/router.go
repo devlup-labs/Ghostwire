@@ -30,6 +30,9 @@ func createRouter() (router *mux.Router) {
 
 	router.HandleFunc("/api", versionCheckHandler)
 	router.HandleFunc("/", rootHandler)
+	router.HandleFunc("/enroll", general.EnrollHandler)
+	router.HandleFunc("/enroll/callback", general.EnrollCallback)
+	router.HandleFunc("/enroll/status", general.EnrollmentStatusHandler)
 
 	return
 }

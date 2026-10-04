@@ -9,6 +9,7 @@ import (
 
 type Device struct {
 	DeviceId         string
+	UserId           string
 	PublicKey        []byte
 	GwIp             string
 	PublicIp         string
@@ -66,7 +67,9 @@ func GetDevice(deviceId string) (d Device, err error) {
 	if err != nil {
 		return d, err
 	}
+
 	d.DeviceId = device.Deviceid
+	d.UserId = device.Userid
 	d.PublicKey = device.Publickey
 	d.GwIp = device.Gwip
 	d.PublicIp = device.Publicip.String
@@ -75,6 +78,7 @@ func GetDevice(deviceId string) (d Device, err error) {
 	d.FirstAccessTime = device.Firstaccesstime
 	d.LastAccessTime = device.Lastaccesstime
 	d.UserAgent = device.Useragent
+
 	return d, err
 }
 

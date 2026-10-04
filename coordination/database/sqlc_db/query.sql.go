@@ -354,6 +354,31 @@ func (q *Queries) GetUser(ctx context.Context, userid string) (User, error) {
 	return i, err
 }
 
+const getUserByOAuth = `-- name: GetUserByOAuth :one
+SELECT userId, userName, userType, oAuthProvider, oAuthId, isRevoked
+FROM users
+WHERE oAuthProvider = ? AND oAuthId = ?
+`
+
+type GetUserByOAuthParams struct {
+	Oauthprovider string
+	Oauthid       string
+}
+
+func (q *Queries) GetUserByOAuth(ctx context.Context, arg GetUserByOAuthParams) (User, error) {
+	row := q.db.QueryRowContext(ctx, getUserByOAuth, arg.Oauthprovider, arg.Oauthid)
+	var i User
+	err := row.Scan(
+		&i.Userid,
+		&i.Username,
+		&i.Usertype,
+		&i.Oauthprovider,
+		&i.Oauthid,
+		&i.Isrevoked,
+	)
+	return i, err
+}
+
 const getUsersByUsername = `-- name: GetUsersByUsername :many
 SELECT userid, username, usertype, oauthprovider, oauthid, isrevoked FROM users
 WHERE userName = ?

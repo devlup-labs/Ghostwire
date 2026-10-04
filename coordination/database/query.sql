@@ -27,6 +27,11 @@ SELECT * FROM users
 WHERE userName = ?
 ORDER BY userId;
 
+-- name: GetUserByOAuth :one
+SELECT userId, userName, userType, oAuthProvider, oAuthId, isRevoked
+FROM users
+WHERE oAuthProvider = ? AND oAuthId = ?;
+
 -- name: DeleteUser :exec
 DELETE FROM users
 WHERE userId = ?;

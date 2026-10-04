@@ -1,6 +1,7 @@
 package database
 
 import (
+	"database/sql"
 	"errors"
 	"time"
 
@@ -48,6 +49,7 @@ func (u User) CreateDevice(publicKey []byte, gwIp string, refreshTokenHash strin
 
 	dev = Device{
 		DeviceId:         d.Deviceid,
+		UserId:           d.Userid,
 		PublicKey:        d.Publickey,
 		GwIp:             d.Gwip,
 		PublicIp:         d.Publicip.String,
@@ -57,6 +59,7 @@ func (u User) CreateDevice(publicKey []byte, gwIp string, refreshTokenHash strin
 		LastAccessTime:   d.Lastaccesstime,
 		UserAgent:        d.Useragent,
 	}
+
 	return dev, err
 }
 
@@ -68,6 +71,7 @@ func (u User) GetDevices() (res []Device, err error) {
 	for _, device := range d {
 		res = append(res, Device{
 			DeviceId:         device.Deviceid,
+			UserId:           device.Userid,
 			PublicKey:        device.Publickey,
 			GwIp:             device.Gwip,
 			PublicIp:         device.Publicip.String,
@@ -105,6 +109,25 @@ func GetUser(userId string) (u User, err error) {
 	if err != nil {
 		return u, err
 	}
+	u.UserId = user.Userid
+	u.UserName = user.Username
+	u.UserType = user.Usertype
+	u.OAuthProvider = user.Oauthprovider
+	u.OAuthId = user.Oauthid
+	u.IsRevoked = user.Isrevoked
+
+	return u, nil
+}
+
+func GetUserByOAuth(oAuthProvider string, oAuthId string) (u User, err error) {
+	user, err := DbQueries.GetUserByOAuth(ctx, sqlc_db.GetUserByOAuthParams{
+		Oauthprovider: oAuthProvider,
+		Oauthid:       oAuthId,
+	})
+	if err != nil {
+		return u, err
+	}
+
 	u.UserId = user.Userid
 	u.UserName = user.Username
 	u.UserType = user.Usertype
@@ -159,4 +182,8 @@ func ListUsers() (res []User, err error) {
 func DeleteUser(userId string) (err error) {
 	err = DbQueries.DeleteUser(ctx, userId)
 	return err
+}
+
+func ErrUserNotFound() error {
+	return sql.ErrNoRows
 }
